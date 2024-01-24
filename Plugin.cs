@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using TootTallyCore.Utils.Helpers;
 using TootTallyCore.Utils.TootTallyModules;
 using TootTallySettings;
@@ -24,7 +25,7 @@ namespace TootTallyHitSounds
         public static Plugin Instance;
 
         private const string CONFIG_NAME = "TootTallyHitSounds.cfg";
-        private const string DEFAULT_HITSOUND = "None";
+        public const string DEFAULT_HITSOUND = "None";
         private Harmony _harmony;
         public ConfigEntry<bool> ModuleConfigEnabled { get; set; }
         public bool IsConfigInitialized { get; set; }
@@ -65,14 +66,10 @@ namespace TootTallyHitSounds
             string targetFolderPath = Path.Combine(Paths.BepInExRootPath, "HitSounds");
             FileHelper.TryMigrateFolder(sourceFolderPath, targetFolderPath, false);
 
-            settingPage = TootTallySettingsManager.AddNewPage("HitSounds", "HitSounds", 40f, new Color(0, 0, 0, 0));
+            settingPage = TootTallySettingsManager.AddNewPage(new CustomHitSoundSettingPage());
             TootTallySettings.Plugin.TryAddThunderstoreIconToPageButton(Instance.Info.Location, Name, settingPage);
-            settingPage.AddSlider("Volume", 0, 1, Volume, false);
-            CreateDropdownFromFolder("HitSounds", HitSoundName, DEFAULT_HITSOUND);
 
-            
-
-            _harmony.PatchAll(typeof(ModuleTemplatePatches));
+            _harmony.PatchAll(typeof(HitSoundPatches));
             LogInfo($"Module loaded!");
         }
 
@@ -83,35 +80,34 @@ namespace TootTallyHitSounds
             LogInfo($"Module unloaded!");
         }
 
-        private TootTallySettingDropdown CreateDropdownFromFolder(string folderName, ConfigEntry<string> config, string defaultValue)
-        {
-            var folderNames = new List<string> { defaultValue };
-            var folderPath = Path.Combine(Paths.BepInExRootPath, folderName);
-            if (Directory.Exists(folderPath))
-            {
-                var directories = Directory.GetFiles(folderPath).ToList();
-                directories.ForEach(d =>
-                {
-                    if (Path.GetExtension(d).ToLower().Contains("wav"))
-                        folderNames.Add(Path.GetFileNameWithoutExtension(d));
-                });
-            }
-            settingPage.AddLabel(folderName, folderName, 24, TMPro.FontStyles.Normal, TMPro.TextAlignmentOptions.BottomLeft);
-            return settingPage.AddDropdown($"{folderName}Dropdown", config, folderNames.ToArray());
-        }
-
-        public static class ModuleTemplatePatches
+        public static class HitSoundPatches
         {
             private static bool _lastIsActive;
             private static AudioSource _hitsound;
             private static float _volume;
-            private static bool _isClipLoaded;
+            public static bool isClipLoaded;
+            public static AudioSource testHitSound;
+
+            [HarmonyPatch(typeof(HomeController), nameof(HomeController.Start))]
+            [HarmonyPostfix]
+            public static void LoadTestHitSound(HomeController __instance)
+            {
+                testHitSound = __instance.gameObject.AddComponent<AudioSource>();
+                testHitSound.volume = Plugin.Instance.Volume.Value;
+                isClipLoaded = false;
+                if (Plugin.Instance.HitSoundName.Value != DEFAULT_HITSOUND)
+                    Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal($"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
+                    {
+                        testHitSound.clip = clip;
+                        isClipLoaded = true;
+                    }));
+            }
 
             [HarmonyPatch(typeof(GameController), nameof(GameController.Start))]
             [HarmonyPostfix]
             public static void LoadHitSound(GameController __instance)
             {
-                _isClipLoaded = false;
+                isClipLoaded = false;
 
                 if (Plugin.Instance.HitSoundName.Value == DEFAULT_HITSOUND) return;
 
@@ -123,7 +119,7 @@ namespace TootTallyHitSounds
                 Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal($"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
                 {
                     _hitsound.clip = clip;
-                    _isClipLoaded = true;
+                    isClipLoaded = true;
                 }));
             }
 
@@ -143,7 +139,7 @@ namespace TootTallyHitSounds
             [HarmonyPostfix]
             public static void PlaySoundOnNewNoteActive(GameController __instance)
             {
-                if (_hitsound == null || !_isClipLoaded) return;
+                if (_hitsound == null || !isClipLoaded) return;
 
                 var fuck = B2s(__instance.leveldata[__instance.currentnoteindex][0], __instance.tempo);
                 if (__instance.musictrack.time > fuck
