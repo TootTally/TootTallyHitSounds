@@ -24,6 +24,7 @@ namespace TootTallyHitSounds
         public static Plugin Instance;
 
         private const string CONFIG_NAME = "TootTallyHitSounds.cfg";
+        private const string DEFAULT_HITSOUND = "None";
         private Harmony _harmony;
         public ConfigEntry<bool> ModuleConfigEnabled { get; set; }
         public bool IsConfigInitialized { get; set; }
@@ -58,7 +59,7 @@ namespace TootTallyHitSounds
             string configPath = Path.Combine(Paths.BepInExRootPath, "config/");
             ConfigFile config = new ConfigFile(configPath + CONFIG_NAME, true) { SaveOnConfigSet = true };
             Volume = config.Bind("General", nameof(Volume), 1f, "Volume of the hitsounds.");
-            HitSoundName = config.Bind("General", nameof(HitSoundName), "None", "Name of the hitsound wav file.");
+            HitSoundName = config.Bind("General", nameof(HitSoundName), DEFAULT_HITSOUND, "Name of the hitsound wav file.");
 
             string sourceFolderPath = Path.Combine(Path.GetDirectoryName(Plugin.Instance.Info.Location), "HitSounds");
             string targetFolderPath = Path.Combine(Paths.BepInExRootPath, "HitSounds");
@@ -67,6 +68,7 @@ namespace TootTallyHitSounds
             settingPage = TootTallySettingsManager.AddNewPage("HitSounds", "HitSounds", 40f, new Color(0, 0, 0, 0));
             TootTallySettings.Plugin.TryAddThunderstoreIconToPageButton(Instance.Info.Location, Name, settingPage);
             settingPage.AddSlider("Volume", 0, 1, Volume, false);
+            CreateDropdownFromFolder("HitSounds", HitSoundName, DEFAULT_HITSOUND);
 
             
 
@@ -87,7 +89,7 @@ namespace TootTallyHitSounds
             var folderPath = Path.Combine(Paths.BepInExRootPath, folderName);
             if (Directory.Exists(folderPath))
             {
-                var directories = Directory.GetDirectories(folderPath).ToList();
+                var directories = Directory.GetFiles(folderPath).ToList();
                 directories.ForEach(d =>
                 {
                     if (Path.GetExtension(d).ToLower().Contains("wav"))
@@ -111,12 +113,13 @@ namespace TootTallyHitSounds
             {
                 _isClipLoaded = false;
 
-                if (Plugin.Instance.HitSoundName.Value == "None") return;
+                if (Plugin.Instance.HitSoundName.Value == DEFAULT_HITSOUND) return;
 
                 _lastIsActive = false;
                 _isSlider = false;
-                _hitsound.volume = _volume = Plugin.Instance.Volume.Value;
+                _lastIndex = -1;
                 _hitsound = __instance.gameObject.AddComponent<AudioSource>();
+                _hitsound.volume = _volume = Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
                 Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal($"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
                 {
                     _hitsound.clip = clip;
@@ -142,13 +145,13 @@ namespace TootTallyHitSounds
             {
                 if (_hitsound == null || !_isClipLoaded) return;
 
-                var fuck = b2s(__instance.leveldata[__instance.currentnoteindex][0], __instance.tempo);
+                var fuck = B2s(__instance.leveldata[__instance.currentnoteindex][0], __instance.tempo);
                 if (__instance.musictrack.time > fuck
                     && __instance.currentnoteindex != _lastIndex
                     && !_isSlider)
                 {
                     _lastIndex = __instance.currentnoteindex;
-                    _volume = Plugin.Instance.Volume.Value;
+                    _volume = Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
                     _hitsound.Play();
                 }
 
@@ -159,20 +162,19 @@ namespace TootTallyHitSounds
                 }
                 else if (_volume > 0)
                 {
-                    _hitsound.volume = Mathf.Clamp(_volume, 0, 1);
                     _volume -= Time.unscaledDeltaTime;
+                    _hitsound.volume = Mathf.Clamp(_volume, 0, 1);
                 }
 
                 _lastIsActive = __instance.noteactive;
             }
 
-            public static float b2s(float time, float bpm) => time / bpm * 60f;
+            public static float B2s(float time, float bpm) => time / bpm * 60f;
 
             public static IEnumerator<UnityWebRequestAsyncOperation> TryLoadingAudioClipLocal(string fileName, Action<AudioClip> callback)
             {
-                string assetDir = Path.Combine(Paths.BepInExRootPath, "HitSounds");
-                assetDir = Path.Combine(assetDir, fileName);
-                UnityWebRequest webRequest = UnityWebRequestMultimedia.GetAudioClip("file://" + assetDir, AudioType.MPEG);
+                string assetDir = Path.Combine(Paths.BepInExRootPath, "HitSounds", fileName);
+                UnityWebRequest webRequest = UnityWebRequestMultimedia.GetAudioClip("file://" + assetDir, AudioType.WAV);
                 yield return webRequest.SendWebRequest();
                 if (!webRequest.isHttpError && !webRequest.isNetworkError)
                     callback(DownloadHandlerAudioClip.GetContent(webRequest));
