@@ -130,7 +130,7 @@ namespace TootTallyHitSounds
             [HarmonyPrefix]
             public static void GetIsSlider(GameController __instance)
             {
-                if (__instance.currentnoteindex + 1 >= __instance.allnotevals.Count) return;
+                if (__instance.currentnoteindex + 1 >= __instance.leveldata.Count) return;
 
                 _isSlider = Mathf.Abs(__instance.leveldata[__instance.currentnoteindex + 1][0] - (__instance.leveldata[__instance.currentnoteindex][0] + __instance.leveldata[__instance.currentnoteindex][1])) < 0.05f;
             }
@@ -139,7 +139,7 @@ namespace TootTallyHitSounds
             [HarmonyPostfix]
             public static void PlaySoundOnNewNoteActive(GameController __instance)
             {
-                if (_hitsound == null || !isClipLoaded) return;
+                if (_hitsound == null || !isClipLoaded || __instance.currentnoteindex >= __instance.leveldata.Count) return;
 
                 var fuck = B2s(__instance.leveldata[__instance.currentnoteindex][0], __instance.tempo);
                 if (__instance.musictrack.time > fuck
@@ -158,7 +158,7 @@ namespace TootTallyHitSounds
                 }
                 else if (_volume > 0)
                 {
-                    _volume -= Time.unscaledDeltaTime;
+                    _volume -= Time.unscaledDeltaTime * GlobalVariables.localsettings.maxvolume;
                     _hitsound.volume = Mathf.Clamp(_volume, 0, 1);
                 }
 
