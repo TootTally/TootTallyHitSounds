@@ -8,7 +8,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using TootTallyCore.Utils;
 using TootTallyCore.Utils.Helpers;
+using TootTallyCore.Utils.TootTallyGlobals;
 using TootTallyCore.Utils.TootTallyModules;
 using TootTallySettings;
 using TootTallySettings.TootTallySettingsObjects;
@@ -61,6 +63,8 @@ namespace TootTallyHitSounds
             ConfigFile config = new ConfigFile(configPath + CONFIG_NAME, true) { SaveOnConfigSet = true };
             Volume = config.Bind("General", nameof(Volume), 1f, "Volume of the hitsounds.");
             HitSoundName = config.Bind("General", nameof(HitSoundName), DEFAULT_HITSOUND, "Name of the hitsound wav file.");
+            SyncWithNotes = config.Bind("General", nameof(SyncWithNotes), false, "Useful for charters to make sure your map is on time. Use with 0ms audio latency for best results.");
+            SyncWithSong = config.Bind("General", nameof(SyncWithSong), true, "Better for players since the clicking sound will (most of the time) match the music's timing.");
 
             string sourceFolderPath = Path.Combine(Path.GetDirectoryName(Plugin.Instance.Info.Location), "HitSounds");
             string targetFolderPath = Path.Combine(Paths.BepInExRootPath, "HitSounds");
@@ -111,9 +115,12 @@ namespace TootTallyHitSounds
 
                 if (Plugin.Instance.HitSoundName.Value == DEFAULT_HITSOUND) return;
 
+                _isStarted = false;
                 _lastIsActive = false;
                 _isSlider = false;
                 _lastIndex = -1;
+                _time = -__instance.noteoffset;
+                _nextTiming = __instance.leveldata.Count > 0 ? B2s(__instance.leveldata[0][0], __instance.tempo) : 0;
                 _hitsound = __instance.gameObject.AddComponent<AudioSource>();
                 _hitsound.volume = _volume = Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
                 Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal($"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
@@ -123,8 +130,21 @@ namespace TootTallyHitSounds
                 }));
             }
 
+            [HarmonyPatch(typeof(GameController), nameof(GameController.playsong))]
+            [HarmonyPostfix]
+            public static void OnPlaySong() =>
+                _isStarted = true;
+
+            [HarmonyPatch(typeof(GameController), nameof(GameController.syncTrackPositions))]
+            [HarmonyPostfix]
+            public static void OnSyncTrack(GameController __instance) =>
+                _time = __instance.musictrack.time - __instance.noteoffset;
+
             private static bool _isSlider;
             private static int _lastIndex;
+            private static double _time;
+            private static float _nextTiming;
+            private static bool _isStarted;
 
             [HarmonyPatch(typeof(GameController), nameof(GameController.grabNoteRefs))]
             [HarmonyPrefix]
@@ -133,24 +153,48 @@ namespace TootTallyHitSounds
                 if (__instance.currentnoteindex + 1 >= __instance.leveldata.Count) return;
 
                 _isSlider = Mathf.Abs(__instance.leveldata[__instance.currentnoteindex + 1][0] - (__instance.leveldata[__instance.currentnoteindex][0] + __instance.leveldata[__instance.currentnoteindex][1])) < 0.05f;
+                _nextTiming = B2s(__instance.leveldata[__instance.currentnoteindex + 1][0], __instance.tempo);
             }
 
             [HarmonyPatch(typeof(GameController), nameof(GameController.Update))]
             [HarmonyPostfix]
             public static void PlaySoundOnNewNoteActive(GameController __instance)
             {
-                if (_hitsound == null || !isClipLoaded || __instance.currentnoteindex >= __instance.leveldata.Count) return;
+                if (_hitsound == null || !isClipLoaded || !_isStarted) return;
 
-                var fuck = B2s(__instance.leveldata[__instance.currentnoteindex][0], __instance.tempo);
-                if (__instance.musictrack.time > fuck
-                    && __instance.currentnoteindex != _lastIndex
-                    && !_isSlider)
+                if (ShouldPlayHitSound(__instance))
                 {
                     _lastIndex = __instance.currentnoteindex;
-                    _volume = Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
-                    _hitsound.Play();
+                    PlayHitSound();
                 }
 
+                FadeOutVolume();
+
+                _lastIsActive = __instance.noteactive;
+            }
+
+            public static float B2s(float time, float bpm) => time / bpm * 60f;
+
+            public static bool ShouldPlayHitSound(GameController __instance)
+            {
+                if (Plugin.Instance.SyncWithNotes.Value)
+                    return __instance.noteactive && !_lastIsActive && !_isSlider;
+
+                if (!__instance.paused)
+                    _time += Time.deltaTime * TootTallyGlobalVariables.gameSpeedMultiplier;
+                return _time > _nextTiming
+                    && _lastIndex != __instance.currentnoteindex
+                    && !_isSlider;
+            }
+
+            public static void PlayHitSound()
+            {
+                _volume = Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
+                _hitsound.Play();
+            }
+
+            public static void FadeOutVolume()
+            {
                 if (_volume < 0)
                 {
                     _volume = 0;
@@ -158,14 +202,10 @@ namespace TootTallyHitSounds
                 }
                 else if (_volume > 0)
                 {
-                    _volume -= Time.unscaledDeltaTime * GlobalVariables.localsettings.maxvolume;
+                    _volume -= Time.unscaledDeltaTime / 2f * Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
                     _hitsound.volume = Mathf.Clamp(_volume, 0, 1);
                 }
-
-                _lastIsActive = __instance.noteactive;
             }
-
-            public static float B2s(float time, float bpm) => time / bpm * 60f;
 
             public static IEnumerator<UnityWebRequestAsyncOperation> TryLoadingAudioClipLocal(string fileName, Action<AudioClip> callback)
             {
@@ -179,5 +219,7 @@ namespace TootTallyHitSounds
 
         public ConfigEntry<float> Volume { get; set; }
         public ConfigEntry<string> HitSoundName { get; set; }
+        public ConfigEntry<bool> SyncWithNotes { get; set; }
+        public ConfigEntry<bool> SyncWithSong { get; set; }
     }
 }

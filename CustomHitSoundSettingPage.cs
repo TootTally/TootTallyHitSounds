@@ -29,11 +29,22 @@ namespace TootTallyHitSounds
 
         private TootTallySettingSlider _volumeSlider;
         private TootTallySettingDropdown _dropdown;
+        private TootTallySettingToggle _toggleSyncWithNotes, _toggleSyncWithSong;
 
         public CustomHitSoundSettingPage() : base("HitSounds", "HitSounds", 40f, new Color(0, 0, 0, 0), _pageBtnColors)
         {
             _volumeSlider = AddSlider("Volume", 0, 1, Plugin.Instance.Volume, false);
             _dropdown = CreateDropdownFromFolder("HitSounds", Plugin.Instance.HitSoundName, Plugin.DEFAULT_HITSOUND);
+            _toggleSyncWithNotes = AddToggle("Sync With Notes", Plugin.Instance.SyncWithNotes, v =>
+            {
+                Plugin.Instance.SyncWithSong.Value = !v;
+                _toggleSyncWithSong.toggle.SetIsOnWithoutNotify(!v);
+            });
+            _toggleSyncWithSong = AddToggle("Sync With Song", Plugin.Instance.SyncWithSong, v =>
+            {
+                Plugin.Instance.SyncWithNotes.Value = !v;
+                _toggleSyncWithNotes.toggle.SetIsOnWithoutNotify(!v);
+            });
             AddButton("Test Sound", TestSound);
         }
 
