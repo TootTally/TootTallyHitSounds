@@ -28,6 +28,7 @@ namespace TootTallyHitSounds
 
         private const string CONFIG_NAME = "TootTallyHitSounds.cfg";
         public const string DEFAULT_HITSOUND = "None";
+        public const string DEFAULT_MISSSOUND = "None";
         private Harmony _harmony;
         public ConfigEntry<bool> ModuleConfigEnabled { get; set; }
         public bool IsConfigInitialized { get; set; }
@@ -61,20 +62,28 @@ namespace TootTallyHitSounds
         {
             string configPath = Path.Combine(Paths.BepInExRootPath, "config/");
             ConfigFile config = new ConfigFile(configPath + CONFIG_NAME, true) { SaveOnConfigSet = true };
-            Volume = config.Bind("General", nameof(Volume), 1f, "Volume of the hitsounds.");
+            HitSoundVolume = config.Bind("General", nameof(HitSoundVolume), 1f, "Volume of the hitsounds.");
+            MissSoundVolume = config.Bind("General", nameof(MissSoundVolume), 1f, "Volume of the misssounds.");
             HitSoundName = config.Bind("General", nameof(HitSoundName), DEFAULT_HITSOUND, "Name of the hitsound wav file.");
+            MissSoundName = config.Bind("General", nameof(MissSoundName), DEFAULT_MISSSOUND, "Name of the misssound wav file.");
             SyncWithNotes = config.Bind("General", nameof(SyncWithNotes), false, "Useful for charters to make sure your map is on time. Use with 0ms audio latency for best results.");
             SyncWithSong = config.Bind("General", nameof(SyncWithSong), true, "Better for players since the clicking sound will (most of the time) match the music's timing.");
 
-            string sourceFolderPath = Path.Combine(Path.GetDirectoryName(Plugin.Instance.Info.Location), "HitSounds");
-            string targetFolderPath = Path.Combine(Paths.BepInExRootPath, "HitSounds");
-            FileHelper.TryMigrateFolder(sourceFolderPath, targetFolderPath, false);
+            TryMigrateSoundsFolder("HitSounds");
+            TryMigrateSoundsFolder("MissSounds");
 
             settingPage = TootTallySettingsManager.AddNewPage(new CustomHitSoundSettingPage());
             TootTallySettings.Plugin.TryAddThunderstoreIconToPageButton(Instance.Info.Location, Name, settingPage);
 
             _harmony.PatchAll(typeof(HitSoundPatches));
             LogInfo($"Module loaded!");
+        }
+
+        private static void TryMigrateSoundsFolder(string folderName)
+        {
+            string sourceFolderPath = Path.Combine(Path.GetDirectoryName(Plugin.Instance.Info.Location), folderName);
+            string targetFolderPath = Path.Combine(Paths.BepInExRootPath, folderName);
+            FileHelper.TryMigrateFolder(sourceFolderPath, targetFolderPath, false);
         }
 
         public void UnloadModule()
@@ -87,23 +96,33 @@ namespace TootTallyHitSounds
         public static class HitSoundPatches
         {
             private static bool _lastIsActive;
-            private static AudioSource _hitsound;
-            private static float _volume;
-            public static bool isClipLoaded;
-            public static AudioSource testHitSound;
+            private static AudioSource _hitSound, _missSound;
+            private static float _hitVolume, _missVolume;
+            public static bool isHitClipLoaded, isMissClipLoaded;
+            public static AudioSource testHitSound, testMissSound;
 
             [HarmonyPatch(typeof(HomeController), nameof(HomeController.Start))]
             [HarmonyPostfix]
-            public static void LoadTestHitSound(HomeController __instance)
+            public static void LoadTestSounds(HomeController __instance)
             {
                 testHitSound = __instance.gameObject.AddComponent<AudioSource>();
-                testHitSound.volume = Plugin.Instance.Volume.Value;
-                isClipLoaded = false;
+                testHitSound.volume = Plugin.Instance.HitSoundVolume.Value;
+                isHitClipLoaded = false;
                 if (Plugin.Instance.HitSoundName.Value != DEFAULT_HITSOUND)
-                    Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal($"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
+                    Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal("HitSounds", $"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
                     {
                         testHitSound.clip = clip;
-                        isClipLoaded = true;
+                        isHitClipLoaded = true;
+                    }));
+
+                testMissSound = __instance.gameObject.AddComponent<AudioSource>();
+                testMissSound.volume = Plugin.Instance.HitSoundVolume.Value;
+                isMissClipLoaded = false;
+                if (Plugin.Instance.MissSoundName.Value != DEFAULT_MISSSOUND)
+                    Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal("MissSounds", $"{Plugin.Instance.MissSoundName.Value}.wav", clip =>
+                    {
+                        testMissSound.clip = clip;
+                        isMissClipLoaded = true;
                     }));
             }
 
@@ -111,22 +130,43 @@ namespace TootTallyHitSounds
             [HarmonyPostfix]
             public static void LoadHitSound(GameController __instance)
             {
-                isClipLoaded = false;
+                isHitClipLoaded = false;
 
                 if (Plugin.Instance.HitSoundName.Value == DEFAULT_HITSOUND) return;
 
                 _isStarted = false;
+                _lastChamp = false;
+                _lastMult = 0;
                 _lastIsActive = false;
                 _isSlider = false;
                 _lastIndex = -1;
                 _time = -__instance.noteoffset;
                 _nextTiming = __instance.leveldata.Count > 0 ? B2s(__instance.leveldata[0][0], __instance.tempo) : 0;
-                _hitsound = __instance.gameObject.AddComponent<AudioSource>();
-                _hitsound.volume = _volume = Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
-                Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal($"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
+                _hitSound = __instance.gameObject.AddComponent<AudioSource>();
+                _hitSound.volume = _hitVolume = Plugin.Instance.HitSoundVolume.Value * GlobalVariables.localsettings.maxvolume;
+                Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal("HitSounds", $"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
                 {
-                    _hitsound.clip = clip;
-                    isClipLoaded = true;
+                    Plugin.LogInfo($"Hit Sounds {Plugin.Instance.HitSoundName.Value} Loaded.");
+                    _hitSound.clip = clip;
+                    isHitClipLoaded = true;
+                }));
+            }
+
+            [HarmonyPatch(typeof(GameController), nameof(GameController.Start))]
+            [HarmonyPostfix]
+            public static void LoadMissSound(GameController __instance)
+            {
+                isMissClipLoaded = false;
+
+                if (Plugin.Instance.MissSoundName.Value == DEFAULT_MISSSOUND) return;
+
+                _missSound = __instance.gameObject.AddComponent<AudioSource>();
+                _missSound.volume = _hitVolume = Plugin.Instance.MissSoundVolume.Value * GlobalVariables.localsettings.maxvolume;
+                Plugin.Instance.StartCoroutine(TryLoadingAudioClipLocal("MissSounds", $"{Plugin.Instance.MissSoundName.Value}.wav", clip =>
+                {
+                    Plugin.LogInfo($"Miss Sounds {Plugin.Instance.MissSoundName.Value} Loaded.");
+                    _missSound.clip = clip;
+                    isMissClipLoaded = true;
                 }));
             }
 
@@ -145,6 +185,8 @@ namespace TootTallyHitSounds
             private static double _time;
             private static float _nextTiming;
             private static bool _isStarted;
+            private static int _lastMult;
+            private static bool _lastChamp;
 
             [HarmonyPatch(typeof(GameController), nameof(GameController.grabNoteRefs))]
             [HarmonyPrefix]
@@ -160,17 +202,34 @@ namespace TootTallyHitSounds
             [HarmonyPostfix]
             public static void PlaySoundOnNewNoteActive(GameController __instance)
             {
-                if (_hitsound == null || !isClipLoaded || !_isStarted) return;
+                if (_hitSound == null || !isHitClipLoaded || !_isStarted) return;
 
                 if (ShouldPlayHitSound(__instance))
                 {
                     _lastIndex = __instance.currentnoteindex;
-                    PlayHitSound();
+                    PlaySound(ref _hitVolume, ref _hitSound, Plugin.Instance.HitSoundVolume.Value);
                 }
 
-                FadeOutVolume();
+                FadeOutVolume(ref _hitVolume,ref _hitSound, Plugin.Instance.HitSoundVolume.Value);
+                FadeOutVolume(ref _missVolume, ref _missSound, Plugin.Instance.MissSoundVolume.Value);
 
                 _lastIsActive = __instance.noteactive;
+            }
+
+            [HarmonyPatch(typeof(GameController), nameof(GameController.getScoreAverage))]
+            [HarmonyPostfix]
+            public static void OnNoteScoringPostfix(GameController __instance)
+            {
+                if (_missSound == null || !isMissClipLoaded || !_isStarted) return;
+
+                if (ShouldPlayMissSount(__instance.multiplier, __instance.rainbowcontroller.champmode))
+                {
+                    PlaySound(ref _missVolume, ref _missSound, Plugin.Instance.MissSoundVolume.Value);
+                }
+
+                _lastMult = __instance.multiplier;
+                _lastChamp = __instance.rainbowcontroller.champmode;
+
             }
 
             public static float B2s(float time, float bpm) => time / bpm * 60f;
@@ -187,29 +246,32 @@ namespace TootTallyHitSounds
                     && !_isSlider;
             }
 
-            public static void PlayHitSound()
+            //Either lose combo or lose champ
+            public static bool ShouldPlayMissSount(int multiplier, bool champ) => (_lastMult >= 10 && multiplier == 0) || (_lastChamp && !champ);
+
+            public static void PlaySound(ref float volume, ref AudioSource audioSource, float maxVolume)
             {
-                _volume = Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
-                _hitsound.Play();
+                volume = maxVolume * GlobalVariables.localsettings.maxvolume;
+                audioSource.Play();
             }
 
-            public static void FadeOutVolume()
+            public static void FadeOutVolume(ref float volume, ref AudioSource audioSource, float maxVolume)
             {
-                if (_volume < 0)
+                if (volume < 0)
                 {
-                    _volume = 0;
-                    _hitsound.Stop();
+                    volume = 0;
+                    audioSource.Stop();
                 }
-                else if (_volume > 0)
+                else if (volume > 0)
                 {
-                    _volume -= Time.unscaledDeltaTime / 2f * Plugin.Instance.Volume.Value * GlobalVariables.localsettings.maxvolume;
-                    _hitsound.volume = Mathf.Clamp(_volume, 0, 1);
+                    volume -= Time.unscaledDeltaTime / 2f * maxVolume * GlobalVariables.localsettings.maxvolume;
+                    audioSource.volume = Mathf.Clamp(volume, 0, 1);
                 }
             }
 
-            public static IEnumerator<UnityWebRequestAsyncOperation> TryLoadingAudioClipLocal(string fileName, Action<AudioClip> callback)
+            public static IEnumerator<UnityWebRequestAsyncOperation> TryLoadingAudioClipLocal(string folderName, string fileName, Action<AudioClip> callback)
             {
-                string assetDir = Path.Combine(Paths.BepInExRootPath, "HitSounds", fileName);
+                string assetDir = Path.Combine(Paths.BepInExRootPath, folderName, fileName);
                 UnityWebRequest webRequest = UnityWebRequestMultimedia.GetAudioClip("file://" + assetDir, AudioType.WAV);
                 yield return webRequest.SendWebRequest();
                 if (!webRequest.isHttpError && !webRequest.isNetworkError)
@@ -217,8 +279,10 @@ namespace TootTallyHitSounds
             }
         }
 
-        public ConfigEntry<float> Volume { get; set; }
+        public ConfigEntry<float> HitSoundVolume { get; set; }
+        public ConfigEntry<float> MissSoundVolume { get; set; }
         public ConfigEntry<string> HitSoundName { get; set; }
+        public ConfigEntry<string> MissSoundName { get; set; }
         public ConfigEntry<bool> SyncWithNotes { get; set; }
         public ConfigEntry<bool> SyncWithSong { get; set; }
     }

@@ -27,14 +27,17 @@ namespace TootTallyHitSounds
             selectedColor = new Color(.6f, .6f, .6f)
         };
 
-        private TootTallySettingSlider _volumeSlider;
-        private TootTallySettingDropdown _dropdown;
+        private TootTallySettingSlider _hitVolumeSlider, _missVolumeSlider;
+        private TootTallySettingDropdown _hitSoundsDropdown, _missSoundsDropdown;
         private TootTallySettingToggle _toggleSyncWithNotes, _toggleSyncWithSong;
 
         public CustomHitSoundSettingPage() : base("HitSounds", "HitSounds", 40f, new Color(0, 0, 0, 0), _pageBtnColors)
         {
-            _volumeSlider = AddSlider("Volume", 0, 1, Plugin.Instance.Volume, false);
-            _dropdown = CreateDropdownFromFolder("HitSounds", Plugin.Instance.HitSoundName, Plugin.DEFAULT_HITSOUND);
+            _hitVolumeSlider = AddSlider("HitSound Volume", 0, 1, Plugin.Instance.HitSoundVolume, false);
+            _hitSoundsDropdown = CreateDropdownFromFolder("HitSounds", Plugin.Instance.HitSoundName, Plugin.DEFAULT_HITSOUND);
+
+            _missVolumeSlider = AddSlider("MissSound Volume", 0, 1, Plugin.Instance.MissSoundVolume, false);
+            _missSoundsDropdown = CreateDropdownFromFolder("MissSounds", Plugin.Instance.MissSoundName, Plugin.DEFAULT_MISSSOUND);
             _toggleSyncWithNotes = AddToggle("Sync With Notes", Plugin.Instance.SyncWithNotes, v =>
             {
                 Plugin.Instance.SyncWithSong.Value = !v;
@@ -45,34 +48,55 @@ namespace TootTallyHitSounds
                 Plugin.Instance.SyncWithNotes.Value = !v;
                 _toggleSyncWithNotes.toggle.SetIsOnWithoutNotify(!v);
             });
-            AddButton("Test Sound", TestSound);
+            AddButton("Test HitSound", TestHitSound);
+            AddButton("Test MissSound", TestMissSound);
         }
 
         public override void Initialize()
         {
             base.Initialize();
-            _volumeSlider.slider.onValueChanged.AddListener(OnVolumeChange);
-            _dropdown.dropdown.onValueChanged.AddListener(OnHitSoundChange);
+            _hitVolumeSlider.slider.onValueChanged.AddListener(OnHitVolumeChange);
+            _missVolumeSlider.slider.onValueChanged.AddListener(OnMissVolumeChange);
+            _hitSoundsDropdown.dropdown.onValueChanged.AddListener(OnHitSoundChange);
+            _missSoundsDropdown.dropdown.onValueChanged.AddListener(OnMissSoundChange);
         }
 
-        private void TestSound()
+        private void TestHitSound()
         {
-            if (HitSoundPatches.isClipLoaded)
+            if (HitSoundPatches.isHitClipLoaded)
                 HitSoundPatches.testHitSound.Play();
+        }
+
+        private void TestMissSound()
+        {
+            if (HitSoundPatches.isMissClipLoaded)
+                HitSoundPatches.testMissSound.Play();
         }
 
         private void OnHitSoundChange(int _)
         {
-            HitSoundPatches.isClipLoaded = false;
+            HitSoundPatches.isHitClipLoaded = false;
             if (Plugin.Instance.HitSoundName.Value != DEFAULT_HITSOUND)
-                Plugin.Instance.StartCoroutine(HitSoundPatches.TryLoadingAudioClipLocal($"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
+                Plugin.Instance.StartCoroutine(HitSoundPatches.TryLoadingAudioClipLocal("HitSounds", $"{Plugin.Instance.HitSoundName.Value}.wav", clip =>
                 {
                     HitSoundPatches.testHitSound.clip = clip;
-                    HitSoundPatches.isClipLoaded = true;
+                    HitSoundPatches.isHitClipLoaded = true;
                 }));
         }
 
-        private void OnVolumeChange(float value) => HitSoundPatches.testHitSound.volume = value;
+        private void OnMissSoundChange(int _)
+        {
+            HitSoundPatches.isMissClipLoaded = false;
+            if (Plugin.Instance.MissSoundName.Value != DEFAULT_MISSSOUND)
+                Plugin.Instance.StartCoroutine(HitSoundPatches.TryLoadingAudioClipLocal("MissSounds", $"{Plugin.Instance.MissSoundName.Value}.wav", clip =>
+                {
+                    HitSoundPatches.testMissSound.clip = clip;
+                    HitSoundPatches.isMissClipLoaded = true;
+                }));
+        }
+
+        private void OnHitVolumeChange(float value) => HitSoundPatches.testHitSound.volume = value;
+        private void OnMissVolumeChange(float value) => HitSoundPatches.testMissSound.volume = value;
 
         private TootTallySettingDropdown CreateDropdownFromFolder(string folderName, ConfigEntry<string> config, string defaultValue)
         {
