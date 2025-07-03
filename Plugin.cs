@@ -68,7 +68,8 @@ namespace TootTallyHitSounds
             MissSoundName = config.Bind("General", nameof(MissSoundName), DEFAULT_MISSSOUND, "Name of the misssound wav file.");
             SyncWithNotes = config.Bind("General", nameof(SyncWithNotes), false, "Useful for charters to make sure your map is on time. Use with 0ms audio latency for best results.");
             SyncWithSong = config.Bind("General", nameof(SyncWithSong), true, "Better for players since the clicking sound will (most of the time) match the music's timing.");
-
+            AddAudioLatencyToSync = Config.Bind("General", nameof(AddAudioLatencyToSync), true, "Adds the audio offset to tracktime for hitsound syncing.");
+            
             TryMigrateSoundsFolder("HitSounds");
             TryMigrateSoundsFolder("MissSounds");
 
@@ -140,7 +141,7 @@ namespace TootTallyHitSounds
                 _lastIsActive = false;
                 _isSlider = false;
                 _lastIndex = -1;
-                _time = -__instance.noteoffset;
+                _trackTime = 0;
                 _nextTiming = __instance.leveldata.Count > 0 ? B2s(__instance.leveldata[0][0], __instance.tempo) : 0;
                 _hitSound = __instance.gameObject.AddComponent<AudioSource>();
                 _hitSound.volume = _hitVolume = Plugin.Instance.HitSoundVolume.Value * GlobalVariables.localsettings.maxvolume;
@@ -175,14 +176,10 @@ namespace TootTallyHitSounds
             public static void OnPlaySong() =>
                 _isStarted = true;
 
-            [HarmonyPatch(typeof(GameController), nameof(GameController.syncTrackPositions))]
-            [HarmonyPostfix]
-            public static void OnSyncTrack(GameController __instance) =>
-                _time = __instance.musictrack.time - __instance.noteoffset;
-
             private static bool _isSlider;
             private static int _lastIndex;
-            private static double _time;
+            private static double _trackTime;
+            private static int _lastSample;
             private static float _nextTiming;
             private static bool _isStarted;
             private static int _lastMult;
@@ -203,6 +200,14 @@ namespace TootTallyHitSounds
             public static void PlaySoundOnNewNoteActive(GameController __instance)
             {
                 if (_hitSound == null || !isHitClipLoaded || !_isStarted) return;
+                if (!_isStarted || __instance.paused || __instance.quitting || __instance.retrying) return;
+
+                _trackTime += Time.deltaTime * TootTallyGlobalVariables.gameSpeedMultiplier;
+                if (_lastSample != __instance.musictrack.timeSamples)
+                {
+                    _trackTime = __instance.musictrack.time - (Instance.AddAudioLatencyToSync.Value ? __instance.latency_offset : 0);
+                    _lastSample = __instance.musictrack.timeSamples;
+                }
 
                 if (ShouldPlayHitSound(__instance))
                 {
@@ -239,9 +244,7 @@ namespace TootTallyHitSounds
                 if (Plugin.Instance.SyncWithNotes.Value)
                     return __instance.noteactive && !_lastIsActive && !_isSlider;
 
-                if (!__instance.paused)
-                    _time += Time.deltaTime * TootTallyGlobalVariables.gameSpeedMultiplier;
-                return _time > _nextTiming
+                return _trackTime > _nextTiming
                     && _lastIndex != __instance.currentnoteindex
                     && !_isSlider;
             }
@@ -285,5 +288,6 @@ namespace TootTallyHitSounds
         public ConfigEntry<string> MissSoundName { get; set; }
         public ConfigEntry<bool> SyncWithNotes { get; set; }
         public ConfigEntry<bool> SyncWithSong { get; set; }
+        public ConfigEntry<bool> AddAudioLatencyToSync { get; set; }
     }
 }

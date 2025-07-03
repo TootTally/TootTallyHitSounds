@@ -48,6 +48,7 @@ namespace TootTallyHitSounds
                 Plugin.Instance.SyncWithNotes.Value = !v;
                 _toggleSyncWithNotes.toggle.SetIsOnWithoutNotify(!v);
             });
+            AddToggle("Add Audio Latency To Sync", Plugin.Instance.AddAudioLatencyToSync);
             AddButton("Test HitSound", TestHitSound);
             AddButton("Test MissSound", TestMissSound);
         }
