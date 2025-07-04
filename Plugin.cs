@@ -255,6 +255,7 @@ namespace TootTallyHitSounds
             public static void PlaySound(ref float volume, ref AudioSource audioSource, float maxVolume)
             {
                 volume = maxVolume * GlobalVariables.localsettings.maxvolume;
+                audioSource.time = 0;
                 audioSource.Play();
             }
 
