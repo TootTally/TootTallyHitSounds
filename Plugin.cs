@@ -68,8 +68,8 @@ namespace TootTallyHitSounds
             MissSoundName = config.Bind("General", nameof(MissSoundName), DEFAULT_MISSSOUND, "Name of the misssound wav file.");
             SyncWithNotes = config.Bind("General", nameof(SyncWithNotes), false, "Useful for charters to make sure your map is on time. Use with 0ms audio latency for best results.");
             SyncWithSong = config.Bind("General", nameof(SyncWithSong), true, "Better for players since the clicking sound will (most of the time) match the music's timing.");
-            AddAudioLatencyToSync = Config.Bind("General", nameof(AddAudioLatencyToSync), true, "Adds the audio offset to tracktime for hitsound syncing.");
-            
+            AddAudioLatencyToSync = Config.Bind("General", nameof(AddAudioLatencyToSync), false, "Adds the audio offset to tracktime for hitsound syncing.");
+
             TryMigrateSoundsFolder("HitSounds");
             TryMigrateSoundsFolder("MissSounds");
 
@@ -98,6 +98,8 @@ namespace TootTallyHitSounds
         {
             private static bool _lastIsActive;
             private static AudioSource _hitSound, _missSound;
+            private static AudioClip _hitSoundClip;
+            private static AudioClip _missSoundClip;
             private static float _hitVolume, _missVolume;
             public static bool isHitClipLoaded, isMissClipLoaded;
             public static AudioSource testHitSound, testMissSound;
@@ -140,7 +142,7 @@ namespace TootTallyHitSounds
                 _lastMult = 0;
                 _lastIsActive = false;
                 _isSlider = false;
-                _lastIndex = -1;
+                _noteIndex = -1; //Because
                 _trackTime = 0;
                 _nextTiming = __instance.leveldata.Count > 0 ? B2s(__instance.leveldata[0][0], __instance.tempo) : 0;
                 _hitSound = __instance.gameObject.AddComponent<AudioSource>();
@@ -149,6 +151,7 @@ namespace TootTallyHitSounds
                 {
                     Plugin.LogInfo($"Hit Sounds {Plugin.Instance.HitSoundName.Value} Loaded.");
                     _hitSound.clip = clip;
+                    _hitSoundClip = clip;
                     isHitClipLoaded = true;
                 }));
             }
@@ -167,6 +170,7 @@ namespace TootTallyHitSounds
                 {
                     Plugin.LogInfo($"Miss Sounds {Plugin.Instance.MissSoundName.Value} Loaded.");
                     _missSound.clip = clip;
+                    _missSoundClip = clip;
                     isMissClipLoaded = true;
                 }));
             }
@@ -177,23 +181,13 @@ namespace TootTallyHitSounds
                 _isStarted = true;
 
             private static bool _isSlider;
-            private static int _lastIndex;
             private static double _trackTime;
             private static int _lastSample;
             private static float _nextTiming;
             private static bool _isStarted;
             private static int _lastMult;
             private static bool _lastChamp;
-
-            [HarmonyPatch(typeof(GameController), nameof(GameController.grabNoteRefs))]
-            [HarmonyPrefix]
-            public static void GetIsSlider(GameController __instance)
-            {
-                if (__instance.currentnoteindex + 1 >= __instance.leveldata.Count) return;
-
-                _isSlider = Mathf.Abs(__instance.leveldata[__instance.currentnoteindex + 1][0] - (__instance.leveldata[__instance.currentnoteindex][0] + __instance.leveldata[__instance.currentnoteindex][1])) < 0.05f;
-                _nextTiming = B2s(__instance.leveldata[__instance.currentnoteindex + 1][0], __instance.tempo);
-            }
+            private static int _noteIndex;
 
             [HarmonyPatch(typeof(GameController), nameof(GameController.Update))]
             [HarmonyPostfix]
@@ -205,18 +199,24 @@ namespace TootTallyHitSounds
                 _trackTime += Time.deltaTime * TootTallyGlobalVariables.gameSpeedMultiplier;
                 if (_lastSample != __instance.musictrack.timeSamples)
                 {
-                    _trackTime = __instance.musictrack.time - (Instance.AddAudioLatencyToSync.Value ? __instance.latency_offset : 0);
+                    _trackTime = __instance.musictrack.time - __instance.noteoffset - (Instance.AddAudioLatencyToSync.Value ? __instance.latency_offset : 0);
                     _lastSample = __instance.musictrack.timeSamples;
                 }
 
                 if (ShouldPlayHitSound(__instance))
                 {
-                    _lastIndex = __instance.currentnoteindex;
-                    PlaySound(ref _hitVolume, ref _hitSound, Plugin.Instance.HitSoundVolume.Value);
+                    _noteIndex++;
+                    _nextTiming = float.MaxValue;
+                    if (!_isSlider)
+                        _hitSound.PlayOneShot(_hitSoundClip);
+
+                    if (_noteIndex + 1 < __instance.leveldata.Count)
+                    {
+                        _isSlider = Mathf.Abs(__instance.leveldata[_noteIndex + 1][0] - (__instance.leveldata[_noteIndex][0] + __instance.leveldata[_noteIndex][1])) < 0.05f;
+                        _nextTiming = B2s(__instance.leveldata[_noteIndex + 1][0], __instance.tempo);
+                    }
                 }
 
-                FadeOutVolume(ref _hitVolume,ref _hitSound, Plugin.Instance.HitSoundVolume.Value);
-                FadeOutVolume(ref _missVolume, ref _missSound, Plugin.Instance.MissSoundVolume.Value);
 
                 _lastIsActive = __instance.noteactive;
             }
@@ -229,7 +229,7 @@ namespace TootTallyHitSounds
 
                 if (ShouldPlayMissSount(__instance.multiplier, __instance.rainbowcontroller.champmode))
                 {
-                    PlaySound(ref _missVolume, ref _missSound, Plugin.Instance.MissSoundVolume.Value);
+                    _missSound.PlayOneShot(_missSoundClip);
                 }
 
                 _lastMult = __instance.multiplier;
@@ -244,34 +244,11 @@ namespace TootTallyHitSounds
                 if (Plugin.Instance.SyncWithNotes.Value)
                     return __instance.noteactive && !_lastIsActive && !_isSlider;
 
-                return _trackTime > _nextTiming
-                    && _lastIndex != __instance.currentnoteindex
-                    && !_isSlider;
+                return _trackTime > _nextTiming;
             }
 
             //Either lose combo or lose champ
             public static bool ShouldPlayMissSount(int multiplier, bool champ) => (_lastMult >= 10 && multiplier == 0) || (_lastChamp && !champ);
-
-            public static void PlaySound(ref float volume, ref AudioSource audioSource, float maxVolume)
-            {
-                volume = maxVolume * GlobalVariables.localsettings.maxvolume;
-                audioSource.time = 0;
-                audioSource.Play();
-            }
-
-            public static void FadeOutVolume(ref float volume, ref AudioSource audioSource, float maxVolume)
-            {
-                if (volume < 0)
-                {
-                    volume = 0;
-                    audioSource.Stop();
-                }
-                else if (volume > 0)
-                {
-                    volume -= Time.unscaledDeltaTime / 2f * maxVolume * GlobalVariables.localsettings.maxvolume;
-                    audioSource.volume = Mathf.Clamp(volume, 0, 1);
-                }
-            }
 
             public static IEnumerator<UnityWebRequestAsyncOperation> TryLoadingAudioClipLocal(string folderName, string fileName, Action<AudioClip> callback)
             {
